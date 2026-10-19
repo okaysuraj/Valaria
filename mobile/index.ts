@@ -1,3 +1,4 @@
+/** Register the native app with Expo. */
 import { registerRootComponent } from 'expo';
 import App from './App';
 

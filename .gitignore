@@ -1,0 +1,51 @@
+# Dependencies and generated builds
+**/node_modules/
+**/dist/
+**/dist-*/
+**/build/
+**/coverage/
+**/playwright-report/
+**/test-results/
+**/.expo/
+**/.expo-shared/
+**/.cache/
+**/web-build/
+**/android/.gradle/
+**/android/app/build/
+**/ios/Pods/
+
+# Environment values and credentials; templates contain public placeholders only.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.keystore
+*.jks
+*service-account*.json
+*serviceAccount*.json
+firebase-adminsdk-*.json
+google-services.json
+GoogleService-Info.plist
+
+# Logs, local databases, exports and OS files
+*.log
+*.tsbuildinfo
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local editor and assistant configuration
+**/.vscode/
+.agents/
+*adminsdk*.json

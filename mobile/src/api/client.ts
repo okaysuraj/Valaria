@@ -1,157 +1,138 @@
+/** Native API requests with environment-aware URLs, Firebase tokens, and timeouts. */
 import Constants from 'expo-constants';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { Movie, TasteMood } from '../types/movie';
+import { auth } from './firebase';
+import type { Catalog, Movie, Page, Profile } from '../types/movie';
 
-/**
- * Resolves the backend API base URL.
- * Priority:
- * 1. EXPO_PUBLIC_API_URL environment variable (if set)
- * 2. Host IP dynamically detected from Expo Go Metro bundler connection (e.g., 192.168.1.37)
- * 3. Android Emulator fallback (10.0.2.2)
- * 4. Fallback detected LAN IP or localhost
- */
-function resolveApiBaseUrl(): string {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-
-  // Auto-detect host IP when running in Expo Go on physical device
-  const hostUri =
-    Constants.expoConfig?.hostUri ||
-    (Constants as any).manifest2?.extra?.expoGo?.debuggerHost ||
-    (Constants as any).manifest?.debuggerHost;
-
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0];
-    if (hostIp && hostIp !== 'localhost' && hostIp !== '127.0.0.1') {
-      return `http://${hostIp}:4000/api`;
+function apiBase(): string {
+  const configured = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (configured) {
+    const parsed = new URL(configured);
+    if (parsed.protocol !== 'https:' && (!__DEV__ || parsed.protocol !== 'http:')) {
+      throw new Error('EXPO_PUBLIC_API_URL must use HTTPS in release builds.');
     }
+    return configured;
   }
-
-  // Android emulator fallback
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:4000/api';
-  }
-
-  // Default detected LAN IP fallback for Expo Go on real device on current Wi-Fi
-  return 'http://192.168.1.37:4000/api';
+  if (!__DEV__) throw new Error('Set EXPO_PUBLIC_API_URL to your HTTPS API endpoint.');
+  const host = Constants.expoConfig?.hostUri?.split(':')[0];
+  return `http://${host || (Platform.OS === 'android' ? '10.0.2.2' : 'localhost')}:4000/api`;
 }
-
-export const API_BASE = resolveApiBaseUrl();
-
-console.log(`[Valaria Mobile API] Resolved API Base URL: ${API_BASE}`);
-
-let _sessionId: string | null = null;
-
-async function getOrCreateSessionId(): Promise<string> {
-  if (_sessionId) return _sessionId;
-
-  const stored = await AsyncStorage.getItem('valaria_session_id');
-  if (stored) {
-    _sessionId = stored;
-    return stored;
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
   }
-
-  // Generate unique session ID
-  const id = 'session-' + Math.random().toString(36).substring(2, 11) + '-' + Date.now().toString(36);
-  await AsyncStorage.setItem('valaria_session_id', id);
-  _sessionId = id;
-  return id;
 }
-
+function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () =>
+      reject(Object.assign(new Error('Request cancelled.'), { name: 'AbortError' }));
+    // Observe the SDK promise even when cancellation happened before this helper ran.
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  authenticated = false,
+): Promise<T> {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', relayAbort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const tokenOperation = authenticated ? auth?.currentUser?.getIdToken() : null;
+    const token = tokenOperation ? await abortable(tokenOperation, controller.signal) : null;
+    if (authenticated && !token) throw new ApiError('Sign in to sync your watchlist.', 401);
+    const res = await fetch(`${apiBase()}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok)
+      throw new ApiError(
+        json?.message ||
+          json?.error?.message ||
+          (typeof json?.error === 'string'
+            ? json.error
+            : `Request failed (${res.status}). Please retry.`),
+        res.status,
+      );
+    if (!json || json.status !== 'ok' || !Object.prototype.hasOwnProperty.call(json, 'data')) {
+      throw new ApiError('The server returned an invalid response. Please retry.', 502);
+    }
+    return json as T;
+  } catch (error) {
+    if (controller.signal.aborted && !options.signal?.aborted)
+      throw new Error('The request timed out. Check your connection and retry.');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', relayAbort);
+  }
+}
+const query = (params: Record<string, string | number | undefined>) => {
+  const pairs = Object.entries(params).filter(
+    ([, value]) => value !== undefined && value !== '' && value !== 'All',
+  );
+  return pairs.length
+    ? `?${pairs.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value!)}`).join('&')}`
+    : '';
+};
 export const api = {
-  /** Fetch all movies (with optional filters) */
-  async getMovies(params?: {
-    genre?: string;
-    mood?: string;
-    search?: string;
-    sort?: string;
-  }): Promise<Movie[]> {
-    const queryParts: string[] = [];
-    if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        if (value && value !== 'All') {
-          queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
-        }
-      });
-    }
-    const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-    const res = await fetch(`${API_BASE}/movies${queryString}`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch movies: HTTP ${res.status}`);
-    }
-    const json = await res.json();
-    return json.data;
+  async catalog(signal?: AbortSignal) {
+    return (await request<{ data: Catalog }>('/catalog', { signal })).data;
   },
-
-  /** Fetch a single movie by ID */
-  async getMovie(id: string): Promise<Movie> {
-    const res = await fetch(`${API_BASE}/movies/${id}`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch movie ${id}: HTTP ${res.status}`);
-    }
-    const json = await res.json();
-    return json.data;
+  movies(params: Record<string, string | number | undefined>, signal?: AbortSignal) {
+    return request<Page<Movie>>(`/movies${query(params)}`, { signal });
   },
-
-  /** Fetch all taste moods */
-  async getMoods(): Promise<TasteMood[]> {
-    const res = await fetch(`${API_BASE}/moods`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch moods: HTTP ${res.status}`);
-    }
-    const json = await res.json();
-    return json.data;
+  async movie(id: string, signal?: AbortSignal) {
+    return (await request<{ data: Movie }>(`/movies/${encodeURIComponent(id)}`, { signal })).data;
   },
-
-  /** Get session watchlist */
-  async getWatchlist(): Promise<{ movieId: string }[]> {
-    const sessionId = await getOrCreateSessionId();
-    const res = await fetch(`${API_BASE}/watchlist/${sessionId}`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch watchlist: HTTP ${res.status}`);
-    }
-    const json = await res.json();
-    return json.data;
+  watchlist(offset = 0, signal?: AbortSignal) {
+    return request<Page<Movie>>(`/watchlist${query({ limit: 24, offset })}`, { signal }, true);
   },
-
-  /** Add movie to watchlist */
-  async addToWatchlist(movieId: string): Promise<void> {
-    const sessionId = await getOrCreateSessionId();
-    const res = await fetch(`${API_BASE}/watchlist/${sessionId}/${movieId}`, {
-      method: 'POST',
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to add to watchlist: HTTP ${res.status}`);
-    }
+  async watchlistIds(signal?: AbortSignal) {
+    return (await request<{ data: string[] }>('/watchlist/ids', { signal }, true)).data;
   },
-
-  /** Remove movie from watchlist */
-  async removeFromWatchlist(movieId: string): Promise<void> {
-    const sessionId = await getOrCreateSessionId();
-    const res = await fetch(`${API_BASE}/watchlist/${sessionId}/${movieId}`, {
-      method: 'DELETE',
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to remove from watchlist: HTTP ${res.status}`);
-    }
+  add(id: string) {
+    return request(`/watchlist/${encodeURIComponent(id)}`, { method: 'PUT' }, true);
   },
-
-  /** Clear entire watchlist */
-  async clearWatchlist(): Promise<void> {
-    const sessionId = await getOrCreateSessionId();
-    const res = await fetch(`${API_BASE}/watchlist/${sessionId}`, {
-      method: 'DELETE',
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to clear watchlist: HTTP ${res.status}`);
-    }
+  remove(id: string) {
+    return request(`/watchlist/${encodeURIComponent(id)}`, { method: 'DELETE' }, true);
   },
-
-  /** Health check */
-  async health(): Promise<{ status: string; database: string }> {
-    const res = await fetch(`${API_BASE}/health`);
-    return res.json();
+  clear() {
+    return request('/watchlist', { method: 'DELETE' }, true);
+  },
+  async profile(signal?: AbortSignal) {
+    return (await request<{ data: Profile }>('/profile', { signal }, true)).data;
+  },
+  async updateProfile(
+    input: Partial<Pick<Profile, 'selectedMoodId' | 'newsletterOptIn' | 'displayName'>>,
+  ) {
+    return (
+      await request<{ data: Profile }>(
+        '/profile',
+        { method: 'PUT', body: JSON.stringify(input) },
+        true,
+      )
+    ).data;
+  },
+  deleteAccount() {
+    return request('/profile/account', { method: 'DELETE' }, true);
   },
 };

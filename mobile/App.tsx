@@ -1,14 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  SafeAreaView,
-  LayoutChangeEvent,
-} from 'react-native';
+/** Compose native navigation and screens; account operations live in useAccount. */
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppState, ScrollView, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Header } from './src/components/Header';
 import { BottomTabBar } from './src/components/BottomTabBar';
 import { HeroPremiere } from './src/components/HeroPremiere';
@@ -17,259 +11,219 @@ import { CuratorBento } from './src/components/CuratorBento';
 import { CatalogGrid } from './src/components/CatalogGrid';
 import { MovieModal } from './src/components/MovieModal';
 import { WatchlistModal } from './src/components/WatchlistModal';
+import { AuthModal } from './src/components/AuthModal';
 import { Toast } from './src/components/Toast';
 import { Footer } from './src/components/Footer';
-
-import { moviesList } from './src/data/moviesData';
-import { Movie, GenreFilter, AppTab } from './src/types/movie';
+import { Button, StateView, ui } from './src/components/ui';
+import type { AppTab, Movie } from './src/types/movie';
 import { api } from './src/api/client';
+import { auth } from './src/api/firebase';
+import { useRequest } from './src/hooks/useRequest';
+
+import { useAccount } from './src/hooks/useAccount';
+import { useToast } from './src/hooks/useToast';
 
 export default function App() {
-  // Global App States
-  const [movies, setMovies] = useState<Movie[]>(moviesList); // fallback to local data
-  const [spotlightMovie, setSpotlightMovie] = useState<Movie>(moviesList[0]);
-  const [activeModalMovie, setActiveModalMovie] = useState<Movie | null>(null);
-  const [watchlistIds, setWatchlistIds] = useState<string[]>([
-    'dune-part-two',
-    'in-the-mood-for-love',
-    'blade-runner-2049',
-  ]);
-  const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
-  const [selectedMoodId, setSelectedMoodId] = useState('dystopian-solitude');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedGenre, setSelectedGenre] = useState<GenreFilter>('All');
   const [activeTab, setActiveTab] = useState<AppTab>('spotlight');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isApiConnected, setIsApiConnected] = useState(false);
-
-  // Section coordinates for smooth anchor scrolling
-  const scrollRef = useRef<ScrollView>(null);
-  const sectionPositions = useRef<{ [key: string]: number }>({
-    spotlight: 0,
-    taste: 0,
-    vault: 0,
-    catalog: 0,
-  });
-
-  // Load movies and watchlist from backend on mount
+  const [spotlightId, setSpotlightId] = useState<string | null>(null);
+  const [movieId, setMovieId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [genre, setGenre] = useState('All');
+  const { toast, showMessage, clearMessage } = useToast();
+  const onAccountChange = useCallback(() => {
+    setMovieId(null);
+    clearMessage();
+  }, [clearMessage]);
+  const {
+    user,
+    authReady,
+    authOpen,
+    setAuthOpen,
+    savedIds,
+    watchlistRevision,
+    profile,
+    profileBusy,
+    preferenceError,
+    setPreferenceError,
+    selectedMoodId,
+    account,
+    toggleWatchlist,
+    clearWatchlist,
+    updatePreferences,
+  } = useAccount({ showMessage, onAccountChange });
+  const catalog = useRequest('catalog', (signal) => api.catalog(signal));
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [fetchedMovies, watchlistData] = await Promise.all([
-          api.getMovies(),
-          api.getWatchlist(),
-        ]);
-
-        if (fetchedMovies && fetchedMovies.length > 0) {
-          setMovies(fetchedMovies);
-          setSpotlightMovie(fetchedMovies[0]);
-          setIsApiConnected(true);
-        }
-
-        if (watchlistData) {
-          setWatchlistIds(watchlistData.map((w) => w.movieId));
-        }
-      } catch (err) {
-        console.warn('[Valaria] Backend unavailable, using local data:', err);
+    let lastRefresh = Date.now();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && Date.now() - lastRefresh > 30_000) {
+        lastRefresh = Date.now();
+        catalog.reload();
+        const signedInUser = auth?.currentUser;
+        if (signedInUser)
+          void signedInUser
+            .reload()
+            .then(() => signedInUser.getIdToken(true))
+            .catch(() => account.reload());
       }
-    };
-    loadData();
-  }, []);
+    });
+    return () => subscription.remove();
+  }, [catalog.reload, account.reload]);
 
-  const spotlightCandidates = movies
-    .filter((m) => m.featuredSpotlight || m.curatorScore >= 98)
-    .slice(0, 5);
-
-  // Watchlist Actions — syncs with backend API
-  const handleToggleWatchlist = useCallback(async (movie: Movie) => {
-    if (watchlistIds.includes(movie.id)) {
-      setWatchlistIds((prev) => prev.filter((id) => id !== movie.id));
-      showToast(`Removed "${movie.title}" from Watchlist`);
-      if (isApiConnected) {
-        try { await api.removeFromWatchlist(movie.id); } catch {}
-      }
-    } else {
-      setWatchlistIds((prev) => [...prev, movie.id]);
-      showToast(`Added "${movie.title}" to Watchlist`);
-      if (isApiConnected) {
-        try { await api.addToWatchlist(movie.id); } catch {}
-      }
-    }
-  }, [watchlistIds, isApiConnected]);
-
-  const handleClearWatchlist = useCallback(async () => {
-    setWatchlistIds([]);
-    showToast('Watchlist cleared');
-    if (isApiConnected) {
-      try { await api.clearWatchlist(); } catch {}
-    }
-  }, [isApiConnected]);
-
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2800);
+  const data = catalog.data;
+  const watchlistCount = !authReady || (user && !profile) ? null : savedIds.size;
+  const spotlight =
+    data?.spotlights.find((movie) => movie.id === spotlightId) || data?.spotlights[0] || null;
+  const collectionProps = {
+    savedIds,
+    onOpenMovie: (movie: Movie) => setMovieId(movie.id),
+    onToggleWatchlist: toggleWatchlist,
   };
-
-  // Section navigation helper
-  const navigateToSection = (tab: AppTab) => {
-    setActiveTab(tab);
-    if (tab === 'watchlist') {
-      setIsWatchlistOpen(true);
-      return;
-    }
-
-    const yPos = sectionPositions.current[tab];
-    if (yPos !== undefined && scrollRef.current) {
-      scrollRef.current.scrollTo({ y: Math.max(0, yPos - 10), animated: true });
-    }
+  const filterProps = {
+    searchQuery: search,
+    onSearchChange: setSearch,
+    selectedGenre: genre,
+    onGenreChange: setGenre,
   };
-
-  const handleOpenSearch = () => {
-    navigateToSection('catalog');
-  };
-
-  const watchlistMovies = movies.filter((m) => watchlistIds.includes(m.id));
-
+  let screen: React.ReactNode;
+  if (activeTab === 'watchlist' && !user) {
+    screen = (
+      <View style={ui.screen}>
+        <StateView
+          title="Your personal watchlist"
+          detail={
+            authReady
+              ? 'Sign in to save films and sync them across web and mobile.'
+              : 'Restoring your account…'
+          }
+        />
+        <View style={ui.section}>
+          <Button primary label="Sign in" disabled={!authReady} onPress={() => setAuthOpen(true)} />
+        </View>
+      </View>
+    );
+  } else if (activeTab === 'watchlist') {
+    screen = (
+      <WatchlistModal
+        {...collectionProps}
+        userId={user?.uid || null}
+        revision={watchlistRevision}
+        onClear={clearWatchlist}
+      />
+    );
+  } else if (!data) {
+    screen = (
+      <View style={ui.screen}>
+        <StateView
+          loading={catalog.loading}
+          error={catalog.error}
+          onRetry={catalog.error ? catalog.reload : undefined}
+        />
+      </View>
+    );
+  } else if (activeTab === 'catalog') {
+    screen = (
+      <CatalogGrid
+        {...collectionProps}
+        {...filterProps}
+        genres={data.genres}
+        mood={selectedMoodId || undefined}
+        activeMoodLabel={data.moods.find((mood) => mood.id === selectedMoodId)?.label}
+        onClearMood={() => void updatePreferences({ selectedMoodId: null })}
+      />
+    );
+  } else if (activeTab === 'taste') {
+    screen = (
+      <TasteEngine
+        {...collectionProps}
+        {...filterProps}
+        genres={data.genres}
+        moods={data.moods}
+        selectedMoodId={selectedMoodId}
+        onSelectMood={(id) => void updatePreferences({ selectedMoodId: id })}
+      />
+    );
+  } else if (activeTab === 'vault') {
+    screen = <CuratorBento {...collectionProps} movies={data.curated} />;
+  } else {
+    screen = (
+      <ScrollView style={ui.screen} contentContainerStyle={{ paddingBottom: 20 }}>
+        <HeroPremiere
+          movie={spotlight}
+          allSpotlights={data.spotlights}
+          onSelectMovie={(movie) => setSpotlightId(movie.id)}
+          onOpenModal={(movie) => setMovieId(movie.id)}
+          isWatchlisted={Boolean(spotlight && savedIds.has(spotlight.id))}
+          onToggleWatchlist={toggleWatchlist}
+        />
+        <View style={ui.section}>
+          <Text style={ui.heading}>Explore the archive</Text>
+          <Text style={ui.body}>
+            {data.total} published {data.total === 1 ? 'film' : 'films'}. Discover selections by
+            mood or explore the full catalog.
+          </Text>
+          <View style={ui.row}>
+            <Button label="Explore moods" onPress={() => setActiveTab('taste')} />
+            <Button label="Curator vault" onPress={() => setActiveTab('vault')} />
+          </View>
+          <Button label="Refresh archive" onPress={catalog.reload} />
+        </View>
+        <Footer
+          profile={profile}
+          signedIn={Boolean(user)}
+          busy={profileBusy}
+          onOptIn={(value) => void updatePreferences({ newsletterOptIn: value })}
+          onCatalog={() => setActiveTab('catalog')}
+          onSignIn={() => setAuthOpen(true)}
+        />
+      </ScrollView>
+    );
+  }
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={ui.screen}>
         <StatusBar style="light" />
-
-        <View style={styles.container}>
-          {/* Top Status & Brand Header */}
-          <Header
-            watchlistCount={watchlistIds.length}
-            onOpenWatchlist={() => setIsWatchlistOpen(true)}
-            onOpenSearch={handleOpenSearch}
-          />
-
-          {/* Main Continuous Curated Stream */}
-          <ScrollView
-            ref={scrollRef}
-            style={styles.mainScrollView}
-            contentContainerStyle={styles.mainScrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Monumental Premiere Spotlight Section */}
-            <View
-              onLayout={(e: LayoutChangeEvent) => {
-                sectionPositions.current.spotlight = e.nativeEvent.layout.y;
-              }}
-            >
-              <HeroPremiere
-                movie={spotlightMovie}
-                allSpotlights={spotlightCandidates}
-                onSelectMovie={(movie) => setSpotlightMovie(movie)}
-                onOpenModal={(movie) => setActiveModalMovie(movie)}
-                isWatchlisted={watchlistIds.includes(spotlightMovie.id)}
-                onToggleWatchlist={handleToggleWatchlist}
-              />
-            </View>
-
-            {/* The Taste Engine & Mood Matrix */}
-            <View
-              onLayout={(e: LayoutChangeEvent) => {
-                sectionPositions.current.taste = e.nativeEvent.layout.y;
-              }}
-            >
-              <TasteEngine
-                selectedMoodId={selectedMoodId}
-                onSelectMood={(moodId) => setSelectedMoodId(moodId)}
-                movies={movies}
-                onOpenMovie={(movie) => setActiveModalMovie(movie)}
-                watchlistIds={watchlistIds}
-                onToggleWatchlist={handleToggleWatchlist}
-              />
-            </View>
-
-            {/* Curator Vault & Optical Lab */}
-            <View
-              onLayout={(e: LayoutChangeEvent) => {
-                sectionPositions.current.vault = e.nativeEvent.layout.y;
-              }}
-            >
-              <CuratorBento
-                movies={movies}
-                onSelectMovie={(movie) => {
-                  setSpotlightMovie(movie);
-                  navigateToSection('spotlight');
-                }}
-              />
-            </View>
-
-            {/* Curated Archive Catalog Grid */}
-            <View
-              onLayout={(e: LayoutChangeEvent) => {
-                sectionPositions.current.catalog = e.nativeEvent.layout.y;
-              }}
-            >
-              <CatalogGrid
-                movies={movies}
-                onOpenMovie={(movie) => setActiveModalMovie(movie)}
-                watchlistIds={watchlistIds}
-                onToggleWatchlist={handleToggleWatchlist}
-                searchQuery={searchQuery}
-                onSearchChange={setSearchQuery}
-                selectedGenre={selectedGenre}
-                onGenreChange={setSelectedGenre}
-              />
-            </View>
-
-            {/* Architectural Footer */}
-            <Footer />
-          </ScrollView>
-
-          {/* Bottom Floating Navigation Tab Bar */}
-          <BottomTabBar
-            activeTab={activeTab}
-            onSelectTab={navigateToSection}
-            watchlistCount={watchlistIds.length}
-          />
-
-          {/* Detailed Movie Modal with 4K Trailer & Specs */}
-          <MovieModal
-            movie={activeModalMovie}
-            onClose={() => setActiveModalMovie(null)}
-            isWatchlisted={
-              activeModalMovie ? watchlistIds.includes(activeModalMovie.id) : false
-            }
-            onToggleWatchlist={handleToggleWatchlist}
-          />
-
-          {/* Watchlist Sheet / Modal with Taste DNA */}
-          <WatchlistModal
-            isOpen={isWatchlistOpen}
-            onClose={() => setIsWatchlistOpen(false)}
-            watchlistMovies={watchlistMovies}
-            onRemoveMovie={handleToggleWatchlist}
-            onOpenMovie={(movie) => setActiveModalMovie(movie)}
-            onClearWatchlist={handleClearWatchlist}
-          />
-
-          {/* Floating Toast Notification */}
-          <Toast message={toastMessage} />
-        </View>
+        <Header
+          watchlistCount={watchlistCount}
+          onOpenWatchlist={() => setActiveTab('watchlist')}
+          onOpenSearch={() => setActiveTab('catalog')}
+          onOpenAccount={() => setAuthOpen(true)}
+          signedIn={Boolean(user)}
+        />
+        {user && account.error && (
+          <View style={[ui.section, { paddingVertical: 8 }]}>
+            <Text style={ui.error}>{account.error}</Text>
+            <Button label="Retry account sync" onPress={account.reload} />
+          </View>
+        )}
+        {screen}
+        <BottomTabBar
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          watchlistCount={watchlistCount}
+        />
+        <MovieModal
+          movieId={movieId}
+          onClose={() => setMovieId(null)}
+          {...collectionProps}
+          onError={showMessage}
+        />
+        <AuthModal
+          open={authOpen}
+          user={user}
+          onClose={() => setAuthOpen(false)}
+          onMessage={showMessage}
+          profile={profile}
+          profileLoading={account.loading}
+          profileError={account.error || preferenceError}
+          preferencePending={profileBusy}
+          onRetryProfile={() => {
+            setPreferenceError(null);
+            account.reload();
+          }}
+          onPreference={(value) => void updatePreferences({ newsletterOptIn: value })}
+        />
+        <Toast message={toast} />
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#08080A',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#08080A',
-  },
-  mainScrollView: {
-    flex: 1,
-  },
-  mainScrollContent: {
-    paddingBottom: 20,
-  },
-});

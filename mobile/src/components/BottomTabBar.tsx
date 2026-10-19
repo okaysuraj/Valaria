@@ -1,12 +1,13 @@
+/** Render accessible native tabs and the saved-film count. */
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Sparkles, Compass, Film, Clapperboard, Bookmark } from 'lucide-react-native';
+import { Sparkles, Compass, Film, Clapperboard, Bookmark } from './icons';
 import { AppTab } from '../types/movie';
 
 interface BottomTabBarProps {
   activeTab: AppTab;
   onSelectTab: (tab: AppTab) => void;
-  watchlistCount: number;
+  watchlistCount: number | null;
 }
 
 export const BottomTabBar: React.FC<BottomTabBarProps> = ({
@@ -33,6 +34,9 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
               onPress={() => onSelectTab(key)}
               activeOpacity={0.7}
               style={[styles.tabItem, isActive && styles.tabItemActive]}
+              accessibilityRole="tab"
+              accessibilityLabel={label}
+              accessibilityState={{ selected: isActive }}
             >
               <View style={styles.iconWrapper}>
                 <Icon
@@ -40,15 +44,13 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
                   color={isActive ? '#E5A93C' : '#8E8E98'}
                   strokeWidth={isActive ? 2.3 : 1.8}
                 />
-                {key === 'watchlist' && watchlistCount > 0 && (
+                {key === 'watchlist' && watchlistCount !== null && watchlistCount > 0 && (
                   <View style={styles.tabBadge}>
                     <Text style={styles.tabBadgeText}>{watchlistCount}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                {label}
-              </Text>
+              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -62,9 +64,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#08080A',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.08)',
-    paddingBottom: 22,
+    paddingBottom: 4,
     paddingTop: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 4,
   },
   tabBar: {
     flexDirection: 'row',
@@ -75,7 +77,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
+    minHeight: 48,
     borderRadius: 12,
     minWidth: 58,
   },

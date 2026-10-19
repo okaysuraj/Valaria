@@ -1,60 +1,80 @@
+/** Web client types for the catalog, profile, and paginated API responses. */
 export interface TechnicalSpecs {
-  resolution: string; // "4K ULTRA HD"
-  aspectRatio: string; // "2.39:1 Panavision"
-  audio: string; // "Dolby Atmos 7.1.4"
-  colorGrade: string; // "35mm Photochemical Transfer" or "Dolby Vision HDR"
-  fps: string; // "24.000 fps"
+  resolution: string | null;
+  aspectRatio: string | null;
+  audio: string | null;
+  colorGrade: string | null;
+  fps: string | null;
 }
 
 export interface StreamingPlatform {
   name: string;
-  type: 'subscription' | 'free_curated' | 'premiere';
-  logoText: string;
-  badgeColor?: string;
+  type: string;
+  logoText?: string | null;
+  badgeColor?: string | null;
+  url: string;
+  region: string;
+  verifiedAt: string;
 }
 
 export interface Movie {
   id: string;
   title: string;
-  originalTitle?: string;
-  tagline: string;
-  director: string;
-  year: number;
-  runtime: string; // e.g. "2h 46m"
-  rating: string; // "PG-13", "R"
-  imdbScore: string; // "8.8"
-  curatorScore: number; // 99 (Valaria index)
-  matchScore: number; // percentage match for current taste
+  originalTitle: string | null;
+  tagline: string | null;
+  director: string | null;
+  year: number | null;
+  runtime: string | null;
+  runtimeMinutes?: number | null;
+  rating: string | null;
+  imdbScore: string | null;
+  curatorScore: number | null;
+  matchScore: number | null;
   genres: string[];
   moods: string[];
-  synopsis: string;
-  curatorNote: string;
-  backdrop: string;
-  poster: string;
-  trailerId?: string; // YouTube trailer video id
-  trailerEmbedUrl?: string;
+  synopsis: string | null;
+  curatorNote: string | null;
+  backdrop: string | null;
+  poster: string | null;
+  trailerId: string | null;
+  trailerEmbedUrl: string | null;
   streamPlatforms: StreamingPlatform[];
   technicalSpecs: TechnicalSpecs;
-  awards?: string[];
+  awards: string[];
   cast: string[];
-  featuredSpotlight?: boolean;
+  featuredSpotlight: boolean;
+  addedAt?: string;
 }
 
 export interface TasteMood {
   id: string;
   label: string;
-  tagline: string;
-  accentHue: string;
+  tagline: string | null;
+  accentHue: string | null;
   matchGenreKeys: string[];
 }
-
-export type GenreFilter = 
-  | 'All'
-  | 'Auteur Vision'
-  | 'Sci-Fi & Speculative'
-  | 'Neo-Noir'
-  | 'Psychological Thriller'
-  | 'Poetic Romance'
-  | 'Documentary & Essay';
-
-export type SortOption = 'match' | 'curator' | 'year' | 'runtime';
+export interface Catalog {
+  spotlights: Movie[];
+  curated: Movie[];
+  moods: TasteMood[];
+  genres: string[];
+  total: number;
+}
+export interface Profile {
+  selectedMoodId: string | null;
+  newsletterOptIn: boolean;
+  displayName: string | null;
+  email: string | null;
+  emailVerified: boolean;
+}
+export interface Pagination {
+  limit: number;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+}
+export interface Page<T> {
+  data: T[];
+  pagination: Pagination;
+}
+export type SortOption = 'title' | 'curator' | 'year' | 'runtime';

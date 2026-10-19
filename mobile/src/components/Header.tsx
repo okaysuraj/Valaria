@@ -1,21 +1,25 @@
+/** Provide native search, account access, and watchlist shortcuts. */
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Bookmark, Search, Sparkles } from 'lucide-react-native';
+import { Bookmark, Search, Sparkles, UserRound } from './icons';
 
 interface HeaderProps {
-  watchlistCount: number;
+  watchlistCount: number | null;
   onOpenWatchlist: () => void;
   onOpenSearch: () => void;
+  onOpenAccount: () => void;
+  signedIn: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   watchlistCount,
   onOpenWatchlist,
   onOpenSearch,
+  onOpenAccount,
+  signedIn,
 }) => {
   return (
     <View style={styles.headerContainer}>
-      {/* Brand Identity */}
       <View style={styles.brandRow}>
         <View style={styles.logoBadge}>
           <Sparkles size={13} color="#E5A93C" />
@@ -25,14 +29,21 @@ export const Header: React.FC<HeaderProps> = ({
           <Text style={styles.brandSubtitle}>CINEMA ARCHIVE</Text>
         </View>
       </View>
-
-      {/* Header Action Buttons */}
       <View style={styles.actionsRow}>
+        <TouchableOpacity
+          onPress={onOpenAccount}
+          style={styles.actionIconButton}
+          accessibilityRole="button"
+          accessibilityLabel={signedIn ? 'Open account' : 'Sign in'}
+        >
+          <UserRound size={18} color="#C4C4CD" />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={onOpenSearch}
           activeOpacity={0.7}
           style={styles.actionIconButton}
           accessibilityLabel="Search Catalog"
+          accessibilityRole="button"
         >
           <Search size={18} color="#C4C4CD" />
         </TouchableOpacity>
@@ -42,11 +53,11 @@ export const Header: React.FC<HeaderProps> = ({
           activeOpacity={0.8}
           style={styles.watchlistButton}
           accessibilityLabel="Open Watchlist"
+          accessibilityRole="button"
         >
           <Bookmark size={15} color="#08080A" fill="#08080A" />
-          <Text style={styles.watchlistText}>WATCHLIST</Text>
           <View style={styles.badgeContainer}>
-            <Text style={styles.badgeText}>{watchlistCount}</Text>
+            <Text style={styles.badgeText}>{watchlistCount ?? '…'}</Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -98,8 +109,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   actionIconButton: {
-    width: 38,
-    height: 38,
+    width: 44,
+    height: 44,
     borderRadius: 19,
     backgroundColor: '#14141B',
     borderWidth: 1,
@@ -108,6 +119,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   watchlistButton: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

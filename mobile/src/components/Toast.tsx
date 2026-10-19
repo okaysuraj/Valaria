@@ -1,20 +1,47 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+/** Show transient status feedback and announce it to assistive technology. */
+import React, { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, View, Text, StyleSheet } from 'react-native';
 
 interface ToastProps {
   message: string | null;
 }
 
 export const Toast: React.FC<ToastProps> = ({ message }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(true);
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => {
+        if (active) setReduceMotion(value);
+      })
+      .catch(() => {
+        if (active) setReduceMotion(true);
+      });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+  useEffect(() => {
+    const animation = Animated.timing(opacity, {
+      toValue: message ? 1 : 0,
+      duration: reduceMotion ? 0 : 160,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [message, opacity, reduceMotion]);
   if (!message) return null;
 
   return (
-    <View style={styles.toastContainer} pointerEvents="none">
-      <View style={styles.toastPill}>
+    <Animated.View style={[styles.toastContainer, { opacity }]} pointerEvents="none">
+      <View style={styles.toastPill} accessibilityLiveRegion="polite" accessibilityRole="alert">
         <View style={styles.dot} />
         <Text style={styles.toastText}>{message}</Text>
       </View>
-    </View>
+    </Animated.View>
   );
 };
 
@@ -50,6 +77,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E5A93C',
   },
   toastText: {
+    flexShrink: 1,
     fontSize: 12,
     fontWeight: '600',
     color: '#FFFFFF',
